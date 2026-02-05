@@ -1,36 +1,40 @@
+import re 
 import requests
-from typing import Optional, List
+from typing import List
 
-session = requests.Session()
 
-headers = {
-    "User-Agent": "curl/7.81.0", 
-    "X-CSRF-Token": "0678da1685095d26eef0d62bd690a32c2bd916f4", 
-}
-cookies = {
-    "mm_session": "98bfc36970e52a6db7b165b402c0118b6976a53b--5c8f1a5d53697bc3b9b4cd3e716507107f7d32740612a6b074d0a3f2ce7d71bc"
-}
-session.headers.update(headers)
-session.cookies.update(cookies)
+class MaxMindClient:
+    def __init__(self):
+        self.session = requests.Session()
+        self.csrf_token = None
+        self._get_csrf_token()
+
+    def _get_csrf_token(self):
+        response = self.session.get('https://www.maxmind.com/en/geoip-web-services-demo')
+        match = re.search(r'<input[^>]*value=["\']([^"\']+)["\'][^>]*name=["\']csrf_token["\']', response.text)
+        self.csrf_token = match.group(1)
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+            'Referer': 'https://www.maxmind.com/en/geoip-web-services-demo',
+            'Origin': 'https://www.maxmind.com'
+        })
+        
+    def _get_bearer_token(self) -> str:
+        self.session.headers.update({'X-CSRF-Token': self.csrf_token})
+        r = self.session.post("https://www.maxmind.com/en/geoip2/demo/token")
+        return r.json().get("token", "")
+
+    def get_timezone_by_ip(self, ip: str) -> str:
+        token = self._get_bearer_token()
+        self.session.headers.update({
+            "Authorization": f"Bearer {token}"
+        })
+        r = self.session.get(f"https://geoip.maxmind.com/geoip/v2.1/city/{ip}?demo=1")
+        return r.json()["location"]["time_zone"]
 
 def get_my_ip() -> str:
-    
-    r = session.get('https://2ip.io/')
+    r = requests.get('https://2ip.io/', headers={'User-Agent': 'curl/7.64.1'})
     return r.text.strip()
-
-def get_bearer_token() -> str:
-    
-    r = session.post("https://www.maxmind.com/en/geoip2/demo/token")
-    return r.json().get("token", "")
-
-def get_timezone_by_ip(ip: str) -> str:
-    
-    token = get_bearer_token()
-    session.headers.update({
-        "Authorization": f"Bearer {token}"
-    })
-    r = session.get(f"https://geoip.maxmind.com/geoip/v2.1/city/{ip}?demo=1")
-    return r.json()["location"]["time_zone"]
 
 def get_matching_timezones(target_timezone: str) -> List[str]:
     r = requests.get(
@@ -54,15 +58,15 @@ def save_results(my_timezone: str, matching_timezones: List[str], filename: str 
             f.write("No matching timezones found\n")
     print(f"Results saved to {filename}")
 
-
 if __name__ == "__main__":
     try:
         ip = get_my_ip()
         print(f"My IP: {ip}")
-        
-        timezone = get_timezone_by_ip(ip)
+    
+        client = MaxMindClient()
+        timezone = client.get_timezone_by_ip(ip)
         print(f"My Timezone: {timezone}")
-        
+    
         matching = get_matching_timezones(timezone)
         print(f"Matching Timezones ({len(matching)}):")
         
